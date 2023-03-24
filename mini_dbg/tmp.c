@@ -19,7 +19,26 @@ void foo_atol(char *str){
     printf("hex for atol: 0x%llx\n", atoll(str));
 }
 
+void mapsTest(){
+    FILE *maps_fd = fopen("/proc/self/maps", "r");
+    unsigned long a, b;
+    char perm[64], name[64];
+    while(fscanf(maps_fd, "%lx-%lx %4s %*[0-9a-f] %*d:%*d %*d%[^\n]", &a, &b, perm, name) != EOF){
+        for(int i = 0; i < 64;i++){
+            if(name[i] == ' ') name[i] = '\x00';
+            else {
+                strcpy(name, &name[i]);
+                break; 
+            }
+        }
+        printf("%lx-%lx %s %s\n", a, b, perm, name);
+    }
+    
+        
+}
+
 int main(){
+    mapsTest();
     foo(1, 2);
     foo_size();
     foo_atol("1234");

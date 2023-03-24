@@ -1,5 +1,6 @@
 #include "utils.h"
 #include <capstone/capstone.h>
+#include "tpl/src/tpl.h"
 
 extern size_t n_regs;
 extern struct reg_descriptor g_register_descriptors[];
@@ -7,12 +8,14 @@ extern struct reg_descriptor g_register_descriptors[];
 static void continue_execution(Debugger *dbg);
 static void exit_debugger(Debugger *dbg);
 static void show_UI(Debugger *dbg);
+static void snapshot(Debugger *dbg);
 
 void dbg_run(Debugger *dbg){
     int wait_status;
     char *cmd;
     waitpid(dbg->d_pid, &wait_status, 0);
     /*UI for start up*/
+    show_UI(dbg);
     while((cmd = linenoise("minidbg$ ")) != NULL){
         dbg_handle_command(dbg, cmd);
         linenoiseHistoryAdd(cmd);
@@ -67,6 +70,8 @@ void dbg_handle_command(Debugger *dbg, char *cmd){
         }else{
             puts("Usage: step in / step over");
         }
+    }else if(is_prefix(command, "snap")){
+        snapshot(dbg);
     }
     else{
         fprintf(stderr, "Unkown command: %s.\n", command);
@@ -371,4 +376,103 @@ void wait_for_signal(Debugger *dbg){
 static void show_UI(Debugger *dbg){
     dbg_dump_all_regs(dbg);
     show_asm(dbg);
+}
+
+const char *Psnap = "snap.bin";
+#define     NAMELEN     128
+
+static uint8_t getPerm(char *sperm){
+    uint8_t ret = 0;
+    if(sperm[3] == 'p') ret |= 0b1000;
+    if(sperm[2] == 'x') ret |= 0b001;
+    if(sperm[1] == 'w') ret |= 0b010;
+    if(sperm[0] == 'r') ret |= 0b100;
+    return ret;
+}
+
+/**
+ * There are several things we need to save, but let`s try to save regs and mems first
+ * 1:Regs{name:value}
+ * 2:Mems{addr, size, perm, name, data}
+ * 
+ * tpl_map("S($(iU)U)#A(S(UUcc#))A(B)", n_regs, 64)
+*/
+static void snapshot(Debugger *dbg){
+    struct reg_descriptor rd;
+    struct reg_map reg_maps[n_regs];        //"S($(iU)U)#", n_regs
+    tpl_node *snapshotND;
+    struct mem_map *mapHeader = NULL, *mem_list, mem_tmp;           //"A(S(UUcs))"
+    tpl_bin tb;                             //"A(B)"
+
+    snapshotND = tpl_map("S($(is)U)#A(S(UUus))A(B)", reg_maps, n_regs, &mem_tmp, &tb);
+    /*save register*/
+    for(int i = 0; i < n_regs; i++){
+        rd = g_register_descriptors[i];
+        reg_maps[i].reg_des = rd;
+        reg_maps[i].value = get_register_value(dbg->d_pid, rd.r);
+    }
+    
+    tpl_pack(snapshotND, 0);
+
+    /** save maps we need to start from /proc/pid/maps file like this:
+     * $ cat /proc/64361/maps 
+        5589d9761000-5589d9825000 r-xp 00000000 08:01 805196                     /bin/zsh
+        5589d9a24000-5589d9a26000 r--p 000c3000 08:01 805196                     /bin/zsh
+        5589d9a26000-5589d9a2c000 rw-p 000c5000 08:01 805196                     /bin/zsh
+        5589d9a2c000-5589d9a40000 rw-p 00000000 00:00 0 
+        5589da2a7000-5589da634000 rw-p 00000000 00:00 0                          [heap]
+        7f645d435000-7f645d445000 r-xp 00000000 08:01 411068                     /usr/lib/x86_64-linux-gnu/zsh/5.4.2/zsh/compctl.so
+        7f645d445000-7f645d645000 ---p 00010000 08:01 411068                     /usr/lib/x86_64-linux-gnu/zsh/5.4.2/zsh/compctl.so
+        7f645d645000-7f645d646000 r--p 00010000 08:01 411068                     /usr/lib/x86_64-linux-gnu/zsh/5.4.2/zsh/compctl.so
+    */
+   /*save map_info*/
+    char path2maps[64];
+    sprintf(path2maps, "/proc/%d/maps", dbg->d_pid);
+    FILE *maps_fd = fopen(path2maps, "r");
+    uint64_t A_start, A_end;
+    char perm[64], name[NAMELEN];
+    int mapSum = 0;
+    /*use map list to recode all maps of target process*/
+    while(fscanf(maps_fd, "%lx-%lx %[rwxp-] %*[0-9a-f] %*d:%*d %*d%[^\n]", &A_start, &A_end, perm, name) != EOF){
+            for(int i = 0; i < NAMELEN;i++){         //strip blanks
+                if(name[i] == ' ') name[i] = '\x00';
+                else {
+                    strcpy(name, &name[i]);
+                    break; 
+                }
+            }
+            struct mem_map *amap = (struct mem_map *)malloc(sizeof(struct mem_map));
+            amap->addr = A_start;
+            amap->size = (A_end - A_start);
+            amap->perm = getPerm(perm);
+            amap->name = malloc(NAMELEN);
+            strcpy(amap->name, name);
+            amap->next = mapHeader;
+            mapHeader = amap;
+            mapSum++;
+    }
+    fclose(maps_fd);
+    for(mem_list = mapHeader; mem_list != NULL; mem_list = mem_list->next){
+        mem_tmp = *mem_list;
+        tpl_pack(snapshotND, 1);
+    }
+
+    /*save mems data*/
+    void *data;       
+    
+    sprintf(path2maps, "/proc/%d/mem", dbg->d_pid);
+    maps_fd = fopen(path2maps, "r");
+    for(struct mem_map *map = mapHeader; map != NULL; map = map->next){         //"A(B)"
+        data = malloc(map->size);       //better free this chunck each time
+        fseek(maps_fd, map->addr, SEEK_SET);
+        fread(data, 1024, (map->size / 1024), maps_fd);
+        tb.sz = map->size;
+        tb.addr = data;
+        tpl_pack(snapshotND, 2);
+        free(data);
+    }
+    fclose(maps_fd);
+    tpl_dump(snapshotND, TPL_FILE, Psnap);
+    tpl_free(snapshotND);
+
 }

@@ -47,6 +47,8 @@
         "uthash.h": "c",
         "linenoise.h": "c",
         "types.h": "c",
-        "user.h": "c"
+        "user.h": "c",
+        "tpl.h": "c",
+        "stdlib.h": "c"
     }
 }

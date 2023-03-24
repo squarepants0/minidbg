@@ -34,6 +34,19 @@ struct reg_descriptor {
     char *name;
 };
 
+struct reg_map {
+    struct reg_descriptor reg_des;
+    uint64_t value;
+};
+struct mem_map{
+    uint64_t addr;
+    uint64_t size;
+    uint32_t perm;
+    char *name;
+    struct mem_map *next;
+};
+
+
 /**
  * debugger uitls
 */
