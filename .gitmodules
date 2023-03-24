@@ -1,3 +1,9 @@
 [submodule "mini_dbg/tpl"]
 	path = mini_dbg/tpl
 	url = https://github.com/troydhanson/tpl
+[submodule "mini_dbg/linenoise"]
+	path = mini_dbg/linenoise
+	url = https://github.com/antirez/linenoise.git
+[submodule "mini_dbg/uthash"]
+	path = mini_dbg/uthash
+	url = https://github.com/troydhanson/uthash.git
