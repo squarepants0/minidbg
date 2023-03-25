@@ -1,0 +1,3 @@
+ INFO: http server starting:8080:68406
+ INFO: http server starting:8080:68441
+ERROR: system call:bind Errno=98 exiting pid=68441

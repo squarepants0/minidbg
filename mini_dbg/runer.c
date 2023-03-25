@@ -2,13 +2,69 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <unicorn/unicorn.h>
+#include <capstone/capstone.h>
 #include "tpl/src/tpl.h"
 #include "utils.h"
 
-void code_hooker(uc_engine* uc, void *user_data){
+void code_hooker(uc_engine* uc, uint64_t address, uint32_t size,void *user_data){
     unsigned long rip = -1;
+    csh handle;
+    cs_insn *insn;
+    uint8_t *code;
+    size_t s = size;
+    uint64_t ad = address;
+    uc_err err;
+
+    code = calloc(1, 0x10);
+    err = uc_mem_read(uc, address, code, size);
+    if(err != UC_ERR_OK) {
+        uc_strerror(err);
+        return;
+    }
+    if(cs_open(CS_ARCH_X86, CS_MODE_64, &handle)){
+        printf("[error] cs_open(%d, %d, 0x%08lx)\n", CS_ARCH_X86, CS_MODE_64, &handle);
+        return;
+    }
+
+    insn = cs_malloc(handle);    
+    if(cs_disasm_iter(handle, (const uint8_t **)&code, &s, &ad, insn)){
+        printf("0x%08lx:\t%s\t%s\n", insn->address, insn->mnemonic, insn->op_str);  
+    }else puts("[error] disassemble!");
+    cs_free(insn, 1);
+    cs_close(&handle);
+
+    // uc_reg_read(uc, UC_X86_REG_RIP, &rip);
+
+    // printf("[PC] 0x%08lx\n", rip);
+}
+
+static void hook_code64(uc_engine *uc, void *user_data)
+{
+    uint64_t rip;
+    csh handle;
+    cs_insn *insn;
+    uint8_t *code;
+    size_t size = 15;
+
+    printf(">>> RIP is 0x%" PRIx64 "\n", rip);
     uc_reg_read(uc, UC_X86_REG_RIP, &rip);
-    printf("[PC] 0x%08lx\n", rip);
+    code = calloc(1, 16);
+    uc_mem_read(uc, rip, code, size);
+    if(cs_open(CS_ARCH_X86, CS_MODE_64, &handle)){
+        printf("[error] cs_open(%d, %d, 0x%08lx)\n", CS_ARCH_X86, CS_MODE_64, &handle);
+        return;
+    }
+
+    insn = cs_malloc(handle);    
+    if(cs_disasm_iter(handle, (const uint8_t **)&code, &size, &rip, insn)){
+        printf("0x%08lx:\t%s\t%s\n", insn->address, insn->mnemonic, insn->op_str);  
+    }else puts("[error] disassemble!");
+    
+
+
+    // Uncomment below code to stop the emulation using uc_emu_stop()
+    // if (address == 0x1000009)
+    //    uc_emu_stop(uc);
 }
 
 void err_mem_hooker(uc_engine *uc, void *user_data){
@@ -19,7 +75,7 @@ void err_mem_hooker(uc_engine *uc, void *user_data){
         uc_strerror(err);
     }
     for(int i = 0; i < count; i++){
-        printf("start: 0x%08lx\tend: 0x%08lx\tperm: %d\n", region[i].begin, region[i].end, region[i].perms);
+        printf("start: 0x%08lx\tend: 0x%08lx\tperm: %s\n", region[i].begin, region[i].end, Nums2perm(region[i].perms));
     }
     uc_free(region);
     unsigned long rsp = -1;
@@ -28,6 +84,12 @@ void err_mem_hooker(uc_engine *uc, void *user_data){
     uc_reg_read(uc, UC_X86_REG_RSP, &rsp);
     uc_mem_read(uc, rsp, &value, sizeof(value));
     printf("[SP] 0x%08lx\tvalue: 0x%08lx\n", rsp, value);
+    uc_reg_read(uc, UC_X86_REG_RSI, &rsp);
+    uc_mem_read(uc, 0x405078, &value, sizeof(value));
+    printf("[RSI] 0x%08lx\tvalue: 0x%08lx\n", rsp, value);
+    uc_mem_read(uc, 0x004010f0, &value, sizeof(value));
+    printf("value: 0x%08lx\n", value);
+    
 }
 
 void set_context(uc_engine *uc, struct reg_map reg_maps[]){
@@ -60,13 +122,28 @@ void set_context(uc_engine *uc, struct reg_map reg_maps[]){
     uc_reg_write(uc, UC_X86_REG_GS, &reg_maps[26].value);
 }
 
-int main(){
+int main(int argc, char *argv[]){
     uc_err err;
     uc_engine *uc;
     struct reg_map reg_maps[27];        //"S($(iU)U)#", n_regs
     struct mem_map *mapHeader = NULL, *mem_list, mem_tmp;           //"A(S(UUcs))"
     tpl_node *snapshotND;
     tpl_bin tb;                             //"A(B)"
+    int oc, debugFlag = 0;
+    
+    while((oc = getopt(argc, argv, "dh")) != -1){
+        switch (oc)
+        {
+        case 'd':
+            debugFlag = 1;
+            break;
+        case 'h':
+        default:
+            puts("Usage: -d show debugInfo\n");
+            exit(0);
+        }
+    }
+
 
     snapshotND = tpl_map("S($(is)U)#A(S(UUus))A(B)", reg_maps, 27, &mem_tmp, &tb);
     tpl_load(snapshotND, TPL_FILE, "snap.bin");
@@ -81,21 +158,24 @@ int main(){
     
 
     while(tpl_unpack(snapshotND, 1) > 0){
-        if(strlen(mem_tmp.name) == 0) printf("name: null\t");
-        else printf("name: %s\t", mem_tmp.name);
-        printf("address: 0x%08lx\tsize: 0x%08lx\tperm: %d\n", mem_tmp.addr, mem_tmp.size, mem_tmp.perm);
-        uc_mem_map(uc, mem_tmp.addr, mem_tmp.size, mem_tmp.perm & 0b0111);
+        // if(strlen(mem_tmp.name) == 0) printf("name: null\t");
+        // else printf("name: %s\t", mem_tmp.name);
+        // printf("address: 0x%08lx\tsize: 0x%08lx\tperm: %d\n", mem_tmp.addr, mem_tmp.size, mem_tmp.perm);
+        // uc_mem_map(uc, mem_tmp.addr, mem_tmp.size, mem_tmp.perm & 0b0111);
+        uc_mem_map(uc, mem_tmp.addr, mem_tmp.size, UC_PROT_ALL);
         tpl_unpack(snapshotND, 2);
         uc_mem_write(uc, mem_tmp.addr, tb.addr, tb.sz);
     }
-    uc_hook code_hook, err_mem_hook;
-    err = uc_hook_add(uc, &code_hook, UC_HOOK_CODE, code_hooker, NULL, 1, 0);
-    err = uc_hook_add(uc, &err_mem_hook, UC_HOOK_MEM_INVALID, err_mem_hooker, NULL, 1, 0);
-    if (err) {
-        printf("Failed on uc_hook_add() with error returned %u: %s\n",
-        err, uc_strerror(err));
+    uc_hook code_hook, err_mem_hook, code_inv_hook;
+    if(debugFlag){
+        err = uc_hook_add(uc, &code_hook, UC_HOOK_CODE, code_hooker, NULL, 1, 0);
+        err = uc_hook_add(uc, &code_inv_hook, UC_HOOK_INSN_INVALID, hook_code64, NULL, 1, 0);
+        err = uc_hook_add(uc, &err_mem_hook, UC_HOOK_MEM_INVALID, err_mem_hooker, NULL, 1, 0);
+        if (err) {
+            printf("Failed on uc_hook_add() with error returned %u: %s\n",
+            err, uc_strerror(err));
+        }
     }
-
 
     err = uc_emu_start(uc, reg_maps[16].value, -1, 0, 0);
     if (err) {

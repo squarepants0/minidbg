@@ -1,51 +1,67 @@
-#include <stdlib.h>
-#include "linenoise/linenoise.h"
 #include <stdio.h>
-#include <string.h>
-#include <strings.h>
-#include <sys/socket.h>
-#include <sys/user.h>
-struct user_regs_struct reg;
+#include <unistd.h>
+#include <sys/types.h>
+#include <unicorn/unicorn.h>
+#include <capstone/capstone.h>
+#include "tpl/src/tpl.h"
+#include "utils.h"
 
-void foo(int a, int b){
-    printf("0x%lx\t0x%lx\t\n", &a, a);
-}
+#define CODE "\xb8\x01\x00\x00\x00\x0f\xae\x24\x25\x00\x20\x40\x00\x90\x90\x90"
 
-void foo_size(){
-    printf("ll: %d\tul: %d\n", sizeof(long long), sizeof(unsigned long));
-}
+static void hook_code64(uc_engine *uc, void *user_data)
+{
+    uint64_t rip;
+    csh handle;
+    cs_insn *insn;
+    uint8_t *code;
+    size_t size = 15;
 
-void foo_atol(char *str){
-    printf("hex for atol: 0x%llx\n", atoll(str));
-}
-
-void mapsTest(){
-    FILE *maps_fd = fopen("/proc/self/maps", "r");
-    unsigned long a, b;
-    char perm[64], name[64];
-    while(fscanf(maps_fd, "%lx-%lx %4s %*[0-9a-f] %*d:%*d %*d%[^\n]", &a, &b, perm, name) != EOF){
-        for(int i = 0; i < 64;i++){
-            if(name[i] == ' ') name[i] = '\x00';
-            else {
-                strcpy(name, &name[i]);
-                break; 
-            }
-        }
-        printf("%lx-%lx %s %s\n", a, b, perm, name);
+    printf(">>> RIP is 0x%" PRIx64 "\n", rip);
+    uc_reg_read(uc, UC_X86_REG_RIP, &rip);
+    code = calloc(1, 16);
+    uc_mem_read(uc, rip, code, size);
+    if(cs_open(CS_ARCH_X86, CS_MODE_64, &handle)){
+        printf("[error] cs_open(%d, %d, 0x%08lx)\n", CS_ARCH_X86, CS_MODE_64, &handle);
+        return;
     }
+
+    insn = cs_malloc(handle);    
+    if(cs_disasm_iter(handle, (const uint8_t **)&code, &size, &rip, insn)){
+        printf("0x%08lx:\t%s\t%s\n", insn->address, insn->mnemonic, insn->op_str);  
+    }else puts("[error] disassemble!");
     
-        
+
+
+    // Uncomment below code to stop the emulation using uc_emu_stop()
+    // if (address == 0x1000009)
+    //    uc_emu_stop(uc);
 }
 
 int main(){
-    mapsTest();
-    foo(1, 2);
-    foo_size();
-    foo_atol("1234");
-    printf("len: %d\n", strlen(calloc(0x10, 1)));
-    char *line = linenoise("test ");
-    printf("size: %d\n", strlen(line));
-    line = linenoise("test ");
-    printf("0x%08lx\n", strtoul("0x123", NULL, 16));
-    return 0;
+    uc_err err;
+    uc_engine *uc;
+
+    err = uc_open(UC_ARCH_X86, UC_MODE_64, &uc);
+    if (err != UC_ERR_OK) {
+        printf("Failed on uc_open() with error returned: %u\n", err);
+        return -1;
+    }
+    uc_mem_map(uc, 0x401000, 0x2000, UC_PROT_ALL);
+    uc_mem_write(uc, 0x401000, CODE, sizeof(CODE) - 1);
+
+    uc_hook code_hook, err_mem_hook, code_inv_hook;
+    if(1){
+        err = uc_hook_add(uc, &code_hook, UC_HOOK_CODE, hook_code64, NULL, 1, 0);
+        if (err) {
+            printf("Failed on uc_hook_add() with error returned %u: %s\n",
+            err, uc_strerror(err));
+        }
+    }
+    err = uc_emu_start(uc, 0x401000, 0, 0, 0);
+    if (err) {
+        printf("Failed on uc_emu_start() with error returned %u: %s\n",
+        err, uc_strerror(err));
+    }
+
+    return 1;
 }

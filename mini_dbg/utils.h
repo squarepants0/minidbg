@@ -11,7 +11,7 @@
 #define     false   0
 #define     true    1
 
-typedef char bool;
+// typedef char bool;
 typedef struct Debugger Debugger;
 typedef struct Breakpoint Breakpoint;
 
@@ -85,7 +85,7 @@ unsigned long get_address(Breakpoint bp);
 /**
  * utils
 */
-bool is_prefix(char *s, const char *ss);
+int is_prefix(char *s, const char *ss);
 uint64_t get_register_value(pid_t pid, enum reg r);
 void set_register_value(pid_t pid, enum reg r, uint64_t value);
 char *get_register_name(enum reg r);
@@ -93,3 +93,5 @@ enum reg get_register_from_name(char *name);
 uint64_t get_pc(Debugger *dbg);
 void set_pc(Debugger *dbg, uint64_t value);
 void show_asm(Debugger *dbg);
+uint8_t Perm2nums(char *sperm);
+const char *Nums2perm(int nums);

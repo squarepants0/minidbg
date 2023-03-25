@@ -10,11 +10,45 @@ static void exit_debugger(Debugger *dbg);
 static void show_UI(Debugger *dbg);
 static void snapshot(Debugger *dbg);
 
+/*command completion*/
+static void cmd_helper(){
+    puts("continue: Try run the process again.");
+    puts("quit: Finish debugging.");
+    puts("break: b + <addr> set a breakpoint.");
+    puts("register: r + <d/r/w> register dump or read or write.");
+    puts("memory: m + <r/w> memory read or write.");
+    puts("step: s + <i/o> step in or over.");
+    puts("snap: make snapshot.");
+    
+}
+static void completion(const char *buf, linenoiseCompletions *lc){
+    if(buf == NULL) return;
+    printf("[comple Hook] %s\n", buf);
+    if(buf[0] == 'h'){
+        linenoiseAddCompletion(lc,"help");
+    }else if(buf[0] == 'c'){
+        linenoiseAddCompletion(lc, "continue");
+    }else if(buf[0] == 'q'){
+        linenoiseAddCompletion(lc, "quit");
+    }else if(buf[0] == 'b'){
+        linenoiseAddCompletion(lc, "break");
+    }else if(buf[0] == 'r'){
+        linenoiseAddCompletion(lc, "register");
+    }else if(buf[0] == 'm'){
+        linenoiseAddCompletion(lc, "memory");
+    }else if(buf[0] == 's'){
+        linenoiseAddCompletion(lc, "step");
+        linenoiseAddCompletion(lc, "snap");
+    }
+}
+
+
 void dbg_run(Debugger *dbg){
     int wait_status;
     char *cmd;
     waitpid(dbg->d_pid, &wait_status, 0);
     /*UI for start up*/
+    linenoiseSetCompletionCallback(completion);
     show_UI(dbg);
     while((cmd = linenoise("minidbg$ ")) != NULL){
         dbg_handle_command(dbg, cmd);
@@ -381,14 +415,6 @@ static void show_UI(Debugger *dbg){
 const char *Psnap = "snap.bin";
 #define     NAMELEN     128
 
-static uint8_t getPerm(char *sperm){
-    uint8_t ret = 0;
-    if(sperm[3] == 'p') ret |= 0b1000;
-    if(sperm[2] == 'x') ret |= 0b001;
-    if(sperm[1] == 'w') ret |= 0b010;
-    if(sperm[0] == 'r') ret |= 0b100;
-    return ret;
-}
 
 /**
  * There are several things we need to save, but let`s try to save regs and mems first
@@ -444,7 +470,7 @@ static void snapshot(Debugger *dbg){
             struct mem_map *amap = (struct mem_map *)malloc(sizeof(struct mem_map));
             amap->addr = A_start;
             amap->size = (A_end - A_start);
-            amap->perm = getPerm(perm);
+            amap->perm = Perm2nums(perm);
             amap->name = malloc(NAMELEN);
             strcpy(amap->name, name);
             amap->next = mapHeader;

@@ -38,7 +38,7 @@ const struct reg_descriptor g_register_descriptors[] = {
     { en_gs, "gs" }
 };
 
-bool is_prefix(char *s, const char *ss){
+int is_prefix(char *s, const char *ss){
     if(s == NULL || ss == NULL) return false;
     if(strlen(s) > strlen(ss)) return false;
     
@@ -111,4 +111,21 @@ uint64_t get_pc(Debugger *dbg){
 
 void set_pc(Debugger *dbg, uint64_t value){
     set_register_value(dbg->d_pid, en_rip, value);
+}
+
+/**
+ * for snapshot function
+ * 
+*/
+uint8_t Perm2nums(char *sperm){
+    uint8_t ret = 0;
+    if(sperm[3] == 'p') ret |= 0b1000;
+    if(sperm[2] == 'x') ret |= 0b001;
+    if(sperm[1] == 'w') ret |= 0b010;
+    if(sperm[0] == 'r') ret |= 0b100;
+    return ret;
+}
+const char *Perms[] = {"???", "???", "???", "???", "r--", "r-x", "rw-", "rwx", "???"};
+const char *Nums2perm(int nums){
+    return Perms[nums];
 }

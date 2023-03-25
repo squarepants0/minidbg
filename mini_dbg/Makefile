@@ -4,8 +4,8 @@ minidbg: linenoise/linenoise.c ./debugger.c ./breakpoint.c ./utils.c ./main.c ./
 reader: ./tpl/src/tpl.c ./snapreader.c
 	gcc ./tpl/src/tpl.c ./snapreader.c -g -o reader
 
-runer: ./tpl/src/tpl.c ./runer.c
-	gcc ./tpl/src/tpl.c ./runer.c -g -o runer -lunicorn
+runer: ./tpl/src/tpl.c ./runer.c ./utils.c
+	gcc ./tpl/src/tpl.c ./utils.c ./runer.c -g -o runer -lunicorn -lcapstone
 
 clean: 
 	rm minidbg
